@@ -1,67 +1,82 @@
 import os
 import zipfile
 import shutil
+from datetime import datetime
 
-# Get the directory where the script is located
-script_dir = os.path.dirname(os.path.abspath(__file__))
-backup_dir = os.path.join(script_dir, "KMZ_backups")
+# Function to preserve the original modified and creation dates of the KML
+def preserve_file_dates(src, dest):
+    # Get the original file's timestamps
+    stat = os.stat(src)
+    mod_time = stat.st_mtime
+    create_time = stat.st_ctime
+    
+    # Set the timestamps for the new file
+    os.utime(dest, (mod_time, mod_time))  # Modify only the access and modified times
+    os.utime(dest, (create_time, mod_time))  # Windows doesn't allow creation time change
 
-# Create the backup directory if it doesn't exist
-os.makedirs(backup_dir, exist_ok=True)
+# Walk through all directories and subdirectories
+def process_kmz_files(root_folder):
+    # Traverse the folder tree
+    for root, dirs, files in os.walk(root_folder):
+        for file in files:
+            if file.endswith('.kmz'):
+                kmz_path = os.path.join(root, file)
+                print(f"Processing {kmz_path}")
 
-# Loop through all KMZ files in the script directory
-for kmz_file in os.listdir(script_dir):
-    if kmz_file.endswith(".kmz"):
-        kmz_path = os.path.join(script_dir, kmz_file)
-        base_name = os.path.splitext(kmz_file)[0]  # Remove .kmz for base name
-        extracted_dir = os.path.join(script_dir, base_name)  # Extracted folder
-        new_extracted_dir = extracted_dir + "_images"  # Corrected renamed folder
+                # Extract the name without extension for renaming purposes
+                base_name = os.path.splitext(file)[0]
+                extracted_folder = os.path.join(root, base_name)
 
-        # Get the original timestamps from the KMZ file
-        kmz_modified_time = os.path.getmtime(kmz_path)
-        kmz_created_time = os.path.getctime(kmz_path)  # Creation time (Windows may not preserve)
+                # Step 1: Create the extraction folder
+                if not os.path.exists(extracted_folder):
+                    os.makedirs(extracted_folder)
 
-        # Unzip the KMZ file
-        with zipfile.ZipFile(kmz_path, "r") as zip_ref:
-            zip_ref.extractall(extracted_dir)
+                # Step 2: Extract the KMZ file
+                with zipfile.ZipFile(kmz_path, 'r') as kmz:
+                    kmz.extractall(extracted_folder)
 
-        # Path of the extracted KML file
-        kml_path = os.path.join(extracted_dir, "doc.kml")
-        
-        # New name for the KML file (same as KMZ but with .kml)
-        new_kml_name = base_name + ".kml"
-        new_kml_path = os.path.join(script_dir, new_kml_name)
+                # Step 3: Rename and move the doc.kml to the parent folder
+                doc_kml_path = os.path.join(extracted_folder, 'doc.kml')
+                new_kml_name = os.path.join(root, base_name + '.kml')
 
-        # Rename and move the KML file to the script's directory
-        if os.path.exists(kml_path):
-            shutil.move(kml_path, new_kml_path)
-            print(f"Renamed and moved: {new_kml_name}")
+                if os.path.exists(doc_kml_path):
+                    os.rename(doc_kml_path, new_kml_name)
 
-            # Set the extracted KML's timestamps to match the original KMZ
-            os.utime(new_kml_path, (kmz_modified_time, kmz_modified_time))  # Set modified & access time
-            try:
-                os.system(f'touch -t {kmz_created_time} "{new_kml_path}"')  # For Unix-based systems
-            except:
-                pass  # Ignore if not supported
-            print(f"Preserved timestamps for: {new_kml_name}")
+                    # Step 4: Preserve the timestamps of the KML file
+                    preserve_file_dates(kmz_path, new_kml_name)
 
-        # Handle images directory
-        images_dir = os.path.join(extracted_dir, "images")
-        if os.path.exists(images_dir) and os.path.isdir(images_dir):
-            for img_file in os.listdir(images_dir):
-                img_path = os.path.join(images_dir, img_file)
-                if os.path.isfile(img_path):
-                    shutil.move(img_path, extracted_dir)  # Move images to parent directory
-            shutil.rmtree(images_dir)  # Remove empty "images" folder
+                # Step 5: Move the images folder contents to the parent folder
+                images_folder = os.path.join(extracted_folder, 'images')
+                if os.path.isdir(images_folder):
+                    images_target_folder = os.path.join(root, base_name + '_images')
+                    
+                    if not os.path.exists(images_target_folder):
+                        os.makedirs(images_target_folder)
 
-        # Ensure the extracted folder is renamed properly
-        if os.path.exists(extracted_dir):
-            shutil.move(extracted_dir, new_extracted_dir)  # Correctly renames the folder
-            print(f"Renamed folder: {new_extracted_dir}")
+                    # Move all images from the 'images' folder
+                    for image_file in os.listdir(images_folder):
+                        src_image_path = os.path.join(images_folder, image_file)
+                        dst_image_path = os.path.join(images_target_folder, image_file)
+                        if os.path.isfile(src_image_path):
+                            shutil.move(src_image_path, dst_image_path)
 
-        # Move the renamed _images folder and KMZ file to the backup directory
-        shutil.move(new_extracted_dir, backup_dir)
-        shutil.move(kmz_path, backup_dir)
-        print(f"Moved {new_extracted_dir} and {kmz_file} to {backup_dir}")
+                # Step 6: Rename the extracted folder and move it to a KMZ_backups folder
+                kmz_backups_folder = os.path.join(root, 'KMZ_backups')
+                if not os.path.exists(kmz_backups_folder):
+                    os.makedirs(kmz_backups_folder)
 
-print("Processing complete.")
+                # Rename the folder to include _images and move it to KMZ_backups
+                images_target_folder = os.path.join(root, base_name + '_images')
+                if os.path.isdir(images_target_folder):
+                    shutil.move(images_target_folder, os.path.join(kmz_backups_folder, base_name + '_images'))
+
+                # Move the original KMZ file to the backups folder
+                shutil.move(kmz_path, kmz_backups_folder)
+
+                # Clean up the extracted folder
+                shutil.rmtree(extracted_folder)
+
+if __name__ == '__main__':
+    # Get the current directory where the script is located
+    script_directory = os.path.dirname(os.path.realpath(__file__))
+    process_kmz_files(script_directory)
